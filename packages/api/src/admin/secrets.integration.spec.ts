@@ -310,7 +310,7 @@ function createRealHandlers(
 
 afterAll(async () => {
   await mongoose.disconnect();
-  await mongoServer.stop();
+  await mongoServer?.stop();
 });
 
 describe('config secret registry — real handlers against a real Config collection', () => {
