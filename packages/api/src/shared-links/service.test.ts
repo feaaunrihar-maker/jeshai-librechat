@@ -330,11 +330,28 @@ describe('updateSharedLinkPermissionsExpiration', () => {
   });
 });
 
+function observeAclDeletion() {
+  const deleteMany = AclEntry.collection.deleteMany.bind(AclEntry.collection);
+  return new Promise<void>((resolve, reject) => {
+    jest.spyOn(AclEntry.collection, 'deleteMany').mockImplementationOnce(async (...args) => {
+      try {
+        const result = await deleteMany(...args);
+        resolve();
+        return result;
+      } catch (error) {
+        reject(error);
+        throw error;
+      }
+    });
+  });
+}
+
 describe('deleteSharedLinkWithCleanup', () => {
   test('deletes link and triggers ACL cleanup', async () => {
     const link = await createTestLink();
     await grantCreationPermissions(link._id, userId, true);
 
+    const cleanup = observeAclDeletion();
     const result = await deleteSharedLinkWithCleanup(userId, link.shareId!);
 
     expect(result).toMatchObject({ success: true, shareId: link.shareId! });
@@ -343,8 +360,7 @@ describe('deleteSharedLinkWithCleanup', () => {
     const linkAfter = await SharedLink.findById(link._id);
     expect(linkAfter).toBeNull();
 
-    // ACL cleanup is async (fire-and-forget), wait briefly
-    await new Promise((r) => setTimeout(r, 100));
+    await cleanup;
     const aclAfter = await AclEntry.find({ resourceId: link._id }).lean();
     expect(aclAfter).toHaveLength(0);
   });
@@ -362,11 +378,12 @@ describe('deleteConvoSharedLinksWithCleanup', () => {
     await grantCreationPermissions(link1._id, userId, true);
     await grantCreationPermissions(link2._id, userId, false);
 
+    const cleanup = observeAclDeletion();
     const result = await deleteConvoSharedLinksWithCleanup(userId, 'convo-a');
 
     expect(result.deletedCount).toBe(2);
 
-    await new Promise((r) => setTimeout(r, 100));
+    await cleanup;
     const aclAfter = await AclEntry.find({
       resourceId: { $in: [link1._id, link2._id] },
     }).lean();
@@ -381,11 +398,12 @@ describe('deleteAllSharedLinksWithCleanup', () => {
     await grantCreationPermissions(link1._id, userId, true);
     await grantCreationPermissions(link2._id, userId, true);
 
+    const cleanup = observeAclDeletion();
     const result = await deleteAllSharedLinksWithCleanup(userId);
 
     expect(result.deletedCount).toBe(2);
 
-    await new Promise((r) => setTimeout(r, 100));
+    await cleanup;
     const aclAfter = await AclEntry.find({
       resourceId: { $in: [link1._id, link2._id] },
     }).lean();
