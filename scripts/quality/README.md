@@ -13,7 +13,21 @@ Mutation jobs have a 240-minute limit. Change-risk jobs have a 45-minute limit.
 A workflow timeout is a failed run, not a quality score. A Stryker `Timeout` result
 means a mutated program timed out; Stryker counts that mutation as detected.
 
-1. Mutation testing uses Stryker 10.1.1. It mutates only added or edited functions.
+1. Mutation testing uses Stryker 10.1.1. It mutates only changed executable lines, not whole
+   functions. A changed simple statement (an expression statement, a declaration, a `return` or
+   `throw`, or the header or test of a compound statement) mutates in full, including every line
+   of a changed multi-line statement. A block, function body, or class member mutates in full
+   only when every executable line it spans changed; an edit inside a nested function never pulls
+   in its unchanged parent, and an edit in the parent never pulls in an unchanged nested function.
+   A deletion-only edit mutates its enclosing simple statement only when the deletion point sits
+   strictly inside it; a deletion between statements selects nothing, and is still recorded.
+   A renamed file with no other edit selects nothing; a new file selects every line. Blank lines
+   and comment-only lines never count as changed. Standalone, side-effect-free
+   `logger.<error|warn|info|debug|verbose|silly>(...)` calls are not mutated, including the
+   mutation that empties a block made up only of such calls; any other call, including one with
+   a side-effecting argument, mutates normally. A changed file carrying a `// Stryker disable`
+   comment with no reason or naming `all` is listed in the selection summary as advisory; it
+   does not fail the run.
    It selects related Jest tests and uses per-test coverage to reduce repeated work.
    Static mutations are disabled by default. These run outside an individual test,
    such as during module loading or a shared test hook. With `static=on`, Stryker
@@ -43,8 +57,9 @@ means a mutated program timed out; Stryker counts that mutation as detected.
    progress snapshot and marks whether the report is complete. Failed runs upload
    partial output when the artifact step can still run. Runner loss or a hard timeout
    can prevent that upload.
-2. Change risk uses the same function selection. The selector compares each function's
-   code with the base version. Comments and spacing do not count as code changes.
+2. Change risk selects whole functions; this selection is separate from mutation's changed-line
+   selection. The selector compares each function's code with the base version. Comments and
+   spacing do not count as code changes.
    An edit that only deletes code still selects the containing function.
    Editing a nested function does not select its unchanged parent or siblings.
    An edited parent also excludes unchanged nested function bodies from mutation.
@@ -108,6 +123,12 @@ directory, including when tests fail. Every group still runs its tests with the
 workspace's existing timeouts. Tests can exercise unchanged code, but only added
 or edited functions appear in the risk report.
 
+`packages/api` changes also get evidence from `api/`'s own specs through a source alias, bounded
+by the repository variable `QUALITY_ALIAS_BUDGET_MINUTES` (an integer from 1 to 25 minutes,
+default 20; an invalid value fails the run). A pass that exceeds the budget, crashes, or produces
+no results file leaves native coverage in place and marks only the affected files incomplete,
+without failing the job.
+
 ## PR commands and merge decision
 
 A user with repository write access can post one of these commands as a new PR
@@ -169,6 +190,131 @@ commit owns the status:
 Request admission and status publication share one queued concurrency group per PR. Each reads the latest
 head and decisions before it writes. This prevents an older result from reopening
 the gate after a newer request has made it pending.
+
+## Inline comments
+
+A completed, requested data-schemas mutation run can leave a bounded number of inline
+survivor comments on the PR diff. The repository variable `QUALITY_INLINE_LIMIT` caps new
+comments per tested commit; it must be an integer from 0 to 20, defaults to 5, and falls
+back to that default with a warning on any other value. `0` turns inline comments off.
+Inline publishing never changes the `Quality decision` outcome: scores stay advisory, and a
+publishing failure is logged, not surfaced as a gate failure.
+
+The unprivileged mutation job writes a `quality-findings` artifact listing survived
+mutants with a stable key, head-relative source location, rank, risk tags, and a short
+reason. The privileged `Publish inline mutant comments` job in `quality-decision.yml` never
+checks out or runs PR code. It downloads that artifact by run ID, then validates it from
+scratch: exactly one `findings.json` under the 1 MB cap, strict schema and range checks
+(hex lengths, integer ranges, enum values, path traversal, text length caps), and that the
+artifact's repository, PR, base, and head match the tested commit before any of it is
+used. A run's own `head_sha` is the default branch for an `issue_comment` run, so the
+publisher binds to the bot's request record instead — matched by request id and
+`attempt <= run_attempt`, the same binding `comment.mts` uses — and trusts that record's
+`head` for the PR head check, the findings' expected head, and the posted review's
+`commit_id`.
+
+A finding is only bound to the PR when its file is in the diff. A single line must sit on
+a RIGHT-side added or context line of one hunk; a multi-line range must lie inside one
+hunk. A range crossing a hunk boundary anchors a single-line comment at the first added
+line inside it, or is dropped if none exists. Everything unbound stays in the report only.
+A stale PR head (moved past the tested commit) skips publishing entirely.
+
+Bound survivors are selected by the artifact's own `rank` field, then file and line; tags
+are informational and never reorder a finding ahead of a lower rank. Existing comments are
+found by a hidden marker (`<!-- quality-mutant:v1 key=... head=... posted=... -->`) and
+matched only when posted by the bot. `posted` is the head a key was first commented at and
+is never rewritten; new posts are capped per tested head, at `QUALITY_INLINE_LIMIT` minus
+the bot comments already carrying that head. A surviving key already commented, at any
+head, is never reposted; its `head` field is updated in place if the head changed. A
+previously reported key no longer surviving is marked stale with a prepended, idempotent
+note, but only when the run's findings are `complete` (never for a `partial` budget-limited
+run) and the comment's file was mutated this run and still carries a patch in the diff —
+the narrowest file set known to have run: every survivor's file, plus every PR file under
+the tested workspace. Everything is posted as one PR review (event `COMMENT`) against the
+tested commit, using `line`/`side: RIGHT` and `start_line` for a multi-line finding.
+
+Comment bodies use plain markdown and neutral wording ("this mutant survived"), fence the
+original and replacement text with a fence longer than any backtick run inside it, and
+never render the artifact's free-text `reason` or an unvalidated `mutator`: the body states
+only the finding's validated `tags` as fixed labels, and `mutator` is rejected at
+validation unless it matches `/^[A-Za-z]+$/`.
+
+## Mutation report
+
+Each data-schemas mutation run produces a step summary and a `report.md` artifact, built
+from the four shards' merged JSON report. Both hold the same sections, in this order:
+
+1. **Test gaps on changed lines** — survivors first. A survivor is a mutation a passing test
+   suite did not detect; the report calls it "not detected by tests", never a bug. Each row
+   lists the location, mutator, original and mutated code, and risk tags.
+2. **No coverage** — changed lines no test executed, grouped per file into contiguous line
+   ranges.
+3. **Status** — one row per result, kept distinct: `Killed`, `Timeout`, `Survived`,
+   `NoCoverage`, `Ignored` (broken down into `static`, `logging-only`, or the exact
+   `Stryker disable` reason text), and `Invalid` (`CompileError`/`RuntimeError`). `Timeout`
+   is never folded into `Killed`: a mutated program that hangs is a distinct outcome from one
+   a test actively caught.
+4. **Scores** — two numbers, each labeled with its formula:
+   - `Killed by assertion`: `Killed / (Killed + Survived + NoCoverage)`. Excludes `Timeout`
+     from both sides; only a test that actively failed counts here.
+   - `Stryker mutation score (counts timeouts as detected)`:
+     `(Killed + Timeout) / (Killed + Timeout + Survived + NoCoverage)`. Matches Stryker's own
+     definition, where a timeout counts as a detected mutant.
+     Both are `N/A (no valid mutants)` when their denominator is zero.
+5. **Suppression advisory** — changed `Stryker disable` comments with no reason or naming
+   `all`, carried from the plan's advisory list. Informational; it does not affect the score.
+6. **Source of truth** — a pointer to the merged JSON report (`mutation.json`) and its HTML
+   report (`mutation.html`, rendered with `mutation-testing-elements`, the same viewer
+   Stryker's own HTML reporter uses), which hold every mutation location.
+
+Ranking (the `rank` field, lowest first) groups survivors by what they put at risk, not by
+how new the surrounding code is. Narrow keyword sets over the mutated code, its enclosing
+function name, and the file path assign one or more tags — `authorization`, `tenant`,
+`credentials`, `data-loss`, or the `behavior` fallback — and the lowest-priority tag (in that
+order) sets the rank's leading digit. Within a tag, emptying an object literal used as a
+filter (`{}`) ranks first, a conditional/equality/logical/boolean mutator ranks next, and
+everything else (including a plain `StringLiteral` change) ranks last. Being inside a newly
+added function is not an input to this ranking: the same mutation ranks identically whether
+its enclosing function is new or unchanged. The `quality-findings` artifact (see
+[Inline comments](#inline-comments) above) carries only `Survived` findings and this rank;
+the full report above carries every status.
+
+### Execution budget
+
+The repository variable `QUALITY_MUTATION_BUDGET_MINUTES` caps the wall-clock time one
+mutation shard's Stryker run may take. It must be an integer from 1 to 230 minutes; unlike
+`QUALITY_INLINE_LIMIT`, an invalid value fails the run with a clear error instead of falling
+back to a default, because a silently wrong budget could hide a shard that is actually
+running far longer than intended. Unset defaults to 60. Stryker's JS API has no run
+abort, so each shard runs as a supervised child process and is signalled (`SIGTERM`, then
+`SIGKILL` after a grace period) if it is still running when the budget elapses.
+
+A shard that hits its budget does not fail outright. It writes a `completion.json` with
+`status: 'partial'`, the mutant results already finished (from `progress.jsonl`, flushed as
+each result arrives), and the exact ids of the mutants that never ran. The merge step accepts
+a partial shard only when its finished and unfinished mutants together exactly cover that
+shard's planned set, with no mutant missing, duplicated, or unexpected; any other mismatch is
+rejected the same way a missing or malformed complete shard is. A merge that includes a
+partial shard sets the findings artifact's `status` to `'partial'`, adds an "Execution budget
+reached" section to the report naming the unfinished mutants, and exits non-zero with the
+distinct message `incomplete: execution budget reached` — separate from a tooling failure, so
+a dashboard or future automation can tell "ran out of time" apart from "broke". The findings
+and report artifacts still upload, because the upload step runs with `if: always()`.
+
+### Incremental reuse: evaluated, not enabled
+
+Stryker supports an incremental mode that reuses a prior run's per-mutant results from a
+cache file keyed by source hash and configuration, skipping mutants whose covering code and
+tests are unchanged. It was evaluated for this pipeline and is not enabled. A comment-
+triggered run on a PR branch can be requested again after a force-push, a rebase, or a change
+to the merge base; a cache populated by an earlier, different commit on the same branch name
+or workflow cache key could then report a mutant as already killed when the code it covers
+has since changed, silently hiding a real regression. The four shards also run concurrently
+against what would need to be one shared cache, and GitHub Actions cache writes are not
+safe for concurrent writers. Reusing results safely would need a cache keyed and invalidated
+per exact head commit, which removes most of the reuse incremental mode offers in a
+comment-triggered workflow where most requests are for a commit that has never run before.
+Each run stays a full run.
 
 ## Activation
 

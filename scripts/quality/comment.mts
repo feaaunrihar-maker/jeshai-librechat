@@ -129,7 +129,8 @@ export function readRequest(comment: Comment): Request | undefined {
   }
 }
 
-async function pages<T>(api: API, path: string, key?: string): Promise<T[]> {
+/** Shared with the inline mutant-comment publisher, which paginates the same list endpoints. */
+export async function pages<T>(api: API, path: string, key?: string): Promise<T[]> {
   const all: T[] = [];
   for (let page = 1; ; page++) {
     const result = await api.request<T[] | Record<string, T[]>>(

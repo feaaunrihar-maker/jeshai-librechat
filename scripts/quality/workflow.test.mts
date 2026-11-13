@@ -20,6 +20,7 @@ import {
 import type { MutationReport } from './merge.mts';
 
 import { git, reportJobs } from './changes.mts';
+import { FINDINGS_UPLOAD_STEP } from './inline.mts';
 import { assertMutants, mutantKey } from './shards.mts';
 import { mutationSummary } from './merge.mts';
 
@@ -198,6 +199,14 @@ test('comment publication is trusted and serialized while PR execution stays rea
     );
     assert.equal(upload?.with?.overwrite, true, 'reruns replace failed artifacts');
   }
+  const findingsUpload = workflow.jobs['mutation-summary'].steps.find(
+    ({ with: options }) => options?.name === 'quality-findings',
+  );
+  assert.equal(
+    findingsUpload?.name,
+    FINDINGS_UPLOAD_STEP,
+    "inline.mts's mutationReportRan trusts this exact step name",
+  );
   for (const name of ['request', 'progress']) {
     const job = workflow.jobs[name];
     assert.equal(checkouts(job)[0].with?.ref, '${{ github.sha }}');
@@ -407,6 +416,10 @@ for (const olderHead of [true, false]) {
       QUALITY_HEAD: head,
       QUALITY_WORKSPACE: 'data-schemas',
       QUALITY_STATIC: mode,
+      // The merge step's --repository/--pr: a fixed fixture value, standing in for the real
+      // workflow's github.repository / pull_request.number context.
+      QUALITY_REPOSITORY: 'quality-fixture/quality-fixture',
+      QUALITY_PR: '1',
       GITHUB_OUTPUT: '',
       GITHUB_STEP_SUMMARY: '',
     };
