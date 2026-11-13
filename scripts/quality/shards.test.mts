@@ -38,7 +38,7 @@ import { mutationTarget } from ${JSON.stringify(new URL('./risk.mts', import.met
 import { planShards, mutantKey, assertMutants, mutationPatterns } from ${JSON.stringify(new URL('./shards.mts', import.meta.url).href)};
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 const source = readFileSync('subject[one].js', 'utf8');
-const target = mutationTarget('subject[one].js', source, [{start: 1, count: 6}], source.replace('> 0', '> 1').replace('enabled: true', 'enabled: false').replace('< 0', '< 1').replace('=== 0', '=== 1'));
+const target = mutationTarget('subject[one].js', source, [{start: 1, count: 6}]);
 const plan = await planShards([target], 'base', 'head', 'fixture');
 writeFileSync('plan.json', JSON.stringify(plan));
 for (const index of [0,1,2,3,4]) {
