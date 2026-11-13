@@ -1,0 +1,25 @@
+version: 1.3.1
+cache: true
+interface:
+  artifacts: true
+  customWelcome: "Welcome to JeshAI — Your Personal AGI-Lite Workspace"
+endpoints:
+  custom:
+    - name: "Groq"
+      apiKey: "${GROQ_API_KEY}"
+      baseURL: "https://api.groq.com/openai/v1"
+      models:
+        default:
+          - "llama-3.1-8b-instant"
+          - "llama-3.3-70b-versatile"
+        fetch: false
+      titleConvo: true
+      titleModel: "llama-3.1-8b-instant"
+  agents:
+    recursionLimit: 15
+    capabilities:
+      - "execute_code"
+      - "file_search"
+      - "actions"
+      - "tools"
+      - "artifacts"
