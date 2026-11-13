@@ -1640,7 +1640,9 @@ export async function initializeAgent(
     agent: {
       provider: agent.provider,
       endpoint: agent.endpoint,
+      model: tokensModel,
       model_parameters: {
+        model: tokensModel,
         useResponsesApi:
           typeof llmConfig.useResponsesApi === 'boolean' ? llmConfig.useResponsesApi : undefined,
       },

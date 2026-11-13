@@ -1714,6 +1714,7 @@ class BaseClient {
     return resolveUseResponsesApi(
       this.options.agent?.model_parameters?.useResponsesApi,
       this.modelOptions?.useResponsesApi,
+      this.options.agent?.model_parameters?.model ?? this.modelOptions?.model ?? this.model,
     );
   }
 
