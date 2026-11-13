@@ -3417,6 +3417,10 @@ export const interfaceSchema = z
      *  default; a deployment that cannot use popups can turn it off and keep
      *  the docked pane. */
     artifactUndocking: z.boolean().optional(),
+    /** Clears a conversation's saved Max Context Tokens when the user switches it to a different
+     *  endpoint, model or agent, so the next turn resolves the new model's context window instead
+     *  of resending the previous model's. Off by default. */
+    resetMaxContextTokensOnModelSwitch: z.boolean().optional(),
     /** Asks each viewer for consent before Google Tag Manager (`ANALYTICS_GTM_ID`)
      *  loads. A deployment that settles consent itself, such as an internal one
      *  covered by its own policy, can set false to load the container without the
@@ -3657,6 +3661,7 @@ export const interfaceSchema = z
     contextUsage: true,
     contextCost: false,
     artifactUndocking: true,
+    resetMaxContextTokensOnModelSwitch: false,
     feedback: true,
     peoplePicker: {
       users: true,
